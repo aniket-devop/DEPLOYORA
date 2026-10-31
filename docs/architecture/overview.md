@@ -83,16 +83,17 @@ There is deliberately **no separate `app` layer in v0.1**. `engine.Run` is the b
 
 A run moves through phases in order, stopping at the first terminal cause:
 
-1. **Preflight:** resolve the target and effective settings (flags, optional `deployora.yaml`, defaults) and validate them, check prerequisites (Docker reachable, Helm and kubeconform present at supported versions), check disk space.
+1. **Preflight:** resolve the target and effective settings (flags, optional `deployora.yaml`, defaults) and validate them, check prerequisites (Docker reachable, Helm and kubeconform present at supported versions), check that each `images.load` image exists in the local Docker daemon, check disk space.
 2. **Validate:** kubeconform on manifests, or on `helm template` output (rendered in memory, never written to disk unredacted).
 3. **Provision:** create Kind cluster `deployora-<runid>` with a pinned node image.
-4. **Deploy:** apply manifests or `helm install` into a fresh namespace.
-5. **Verify:** run checks.
-6. **Collect:** always runs once a cluster exists, including after failure, cancellation or timeout (best effort, within a reserved wind-down budget).
-7. **Report:** write `report.json` and `report.html`.
-8. **Teardown:** delete the cluster (skipped only with `--keep-cluster`).
+4. **Load images:** only if `images.load` is set: load each listed local image into the Kind cluster (section 15.1).
+5. **Deploy:** apply manifests or `helm install` into a fresh namespace.
+6. **Verify:** run checks.
+7. **Collect:** always runs once a cluster exists, including after failure, cancellation or timeout (best effort, within a reserved wind-down budget).
+8. **Report:** write `report.json` and `report.html`.
+9. **Teardown:** delete the cluster (skipped only with `--keep-cluster`).
 
-Phases 1 to 5 are **verdict stages**: the first terminal cause among them fixes the run's outcome. Phases 6 to 8 are **wind-down stages**: they never change the outcome, whatever happens in them (sections 6.4 and 6.5).
+Phases 1 to 6 are **verdict stages**: the first terminal cause among them fixes the run's outcome. Phases 7 to 9 are **wind-down stages**: they never change the outcome, whatever happens in them (sections 6.4 and 6.5).
 
 Analysis is not a phase. It is a separate command or flag that runs after the run is finished.
 
@@ -119,8 +120,10 @@ Every outcome carries a machine-readable `reason` code and the `stage` where it 
 | `helm template` fails to render the chart | `failed` | `render_failed` | validate | No |
 | CRD schema missing | warning by default; with `--strict-schemas`, `failed` | `schema_missing` | validate | No |
 | Unparseable config, unknown field, missing, unrecognizable or ambiguous target path, library chart, chart dependencies not vendored, unsupported Kubernetes version | `invalid_config` | `config_invalid` | preflight | No |
+| An image listed in `images.load` is not found in the local Docker daemon | `invalid_config` | `config_invalid` | preflight | No |
 | Docker not running, Helm or kubeconform missing or unsupported version, disk full | `errored` | `prerequisite_missing` or `environment_error` | preflight | No |
 | Kind create fails (cannot pull node image, resource exhaustion, port conflict) | `errored` | `provision_failed` | provision | Maybe (cleaned) |
+| Loading an `images.load` image into the Kind cluster fails or times out | `errored` | `image_load_failed` | load | Yes |
 | Explicit admission or policy denial: a validating or mutating webhook, a ValidatingAdmissionPolicy, or built-in admission control (for example Pod Security) responds by denying an object | `failed` | `admission_rejected` | deploy | Yes |
 | Invalid workload configuration: the API server returns Invalid or BadRequest for an object; AlreadyExists for an object the submitted manifests declare more than once; unknown kind or missing CRD; Helm install or hook failure attributed to the chart | `failed` | `invalid_workload_config` | deploy | Yes |
 | Authentication or RBAC authorization failure against Deployora's own cluster credentials: 401 Unauthorized, or 403 Forbidden carrying the RBAC authorizer message shape | `errored` | `authorization_failed` | the active stage | Yes |
@@ -164,7 +167,7 @@ Notes on the less obvious rows:
 
 ### 6.4 Rules that keep classification honest
 
-1. **First terminal cause wins.** Verdict stages (preflight, validate, provision, deploy, verify) are sequential and stop at the first failure, error, timeout or cancellation. That first terminal cause fixes the run's outcome. If all verdict stages pass, the outcome is `passed`.
+1. **First terminal cause wins.** Verdict stages (preflight, validate, provision, load, deploy, verify) are sequential and stop at the first failure, error, timeout or cancellation. That first terminal cause fixes the run's outcome. If all verdict stages pass, the outcome is `passed`.
 2. **Cancellation during the verdict stages wins over anything that happens after the signal.** A signal that arrives after the outcome is already fixed (during wind-down) does not change it.
 3. **Wind-down stages cannot change the outcome.** Collect, report and teardown run after the verdict is fixed (or, when a verdict stage was cut short, as best-effort cleanup). A failure, error, timeout or interruption in any of them is recorded as a warning and never as an outcome. This holds for every outcome (6.5), and it is what keeps rule 1 true: the first terminal cause among the verdict stages is the only one that counts.
 4. **Analysis never affects the outcome.** If Claude is unavailable, the report says `analysis: unavailable (reason)` and exit codes are unchanged.
@@ -577,6 +580,8 @@ Other defaults: the release name is the chart name (truncated to Helm's limit), 
 
 **Known limitation: charts that need values.** Many charts cannot render without values. In a config-less run such a chart ends as `failed/render_failed`, which can mean "a required value was not supplied" rather than "the chart is broken". The report shows Helm's message and a hint to pass `--values`. Deployora does not read `ci/*-values.yaml` files automatically in v0.1.0 [K: the chart-testing convention is unverified; revisit after checking].
 
+**Local images (`images.load`).** The Kind cluster cannot see images that exist only in your local Docker daemon. List them under `images.load` in `deployora.yaml` and Deployora loads them into the cluster before deploying (stage `load`). Each listed image must already exist locally; this is checked in preflight, and a missing image is `invalid_config`. In v0.1.0 this needs `deployora.yaml`; a `--load-image` flag comes later. **Pull-policy trap:** an image with the `:latest` tag, or with no tag, defaults to `imagePullPolicy: Always`, so the kubelet tries the registry and ignores the loaded image. Use a specific tag, or set `imagePullPolicy: IfNotPresent` (or `Never`). Preflight prints a warning when a listed image uses `:latest` or has no tag; it is a warning, never an outcome.
+
 **Reproducibility.** The resolved settings are recorded in `run.json` as `effective_settings` (flag values and file paths, never file contents), so a flag-only run can be reproduced.
 
 ### 15.2 Config file sketch (optional)
@@ -587,6 +592,7 @@ target:
   helm: { chart: ./charts/app, values: [ci-values.yaml], namespace: app }
   # or: manifests: [./k8s/]
 cluster: { kubernetesVersion: "1.31" }
+images: { load: [myapp:dev] }   # optional: local images to load into Kind (section 15.1)
 validate: { kubernetesVersion: "1.31.0", strictSchemas: false }
 checks:
   defaults: true             # readiness, restarts/crash loops, Jobs, Services have ready endpoints
