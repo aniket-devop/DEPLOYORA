@@ -16,9 +16,9 @@ This document describes planned architecture and design intent. It is not a stat
 
 Deployora answers: **"Will this deploy and run healthy on a clean, throwaway Kubernetes cluster, and if not, why?"**
 
-**v0.1 does exactly this, locally:** validate manifests or a Helm chart with kubeconform, create a Kind cluster, deploy, run readiness and service checks, collect redacted evidence, write JSON and HTML reports, tear everything down, and (as the final v0.1 milestone) optionally ask Claude to explain failures.
+**v0.1.0 does exactly this, locally:** validate manifests or a Helm chart with kubeconform, create a Kind cluster, deploy, run readiness and service checks, collect redacted evidence, write JSON and HTML reports, and tear everything down.
 
-**Not in v0.1:** REST API, PostgreSQL, job workers, remote execution, React dashboard, runner adapters, remediation approval workflow, bring-your-own-cluster, any hosted or shared service.
+**Not in v0.1.0:** Claude failure analysis (planned for a later v0.1.x release, once the core is stable), REST API, PostgreSQL, job workers, remote execution, React dashboard, runner adapters, remediation approval workflow, bring-your-own-cluster, any hosted or shared service.
 
 ## 2. Design principles
 
@@ -35,8 +35,8 @@ Deployora answers: **"Will this deploy and run healthy on a clean, throwaway Kub
 
 | Phase | Contents | Entry gate |
 |---|---|---|
-| **v0.1 (core)** | CLI; preflight; kubeconform validation; Kind lifecycle; manifest and Helm deploy; readiness and service checks; evidence collection and redaction; JSON and HTML reports; local run directories with pruning; composite GitHub Action; `doctor` and `gc` | none |
-| **v0.1 (last milestone): analysis** | `--analyze` using Claude, with payload preview, citation validation, cost caps | Core exit criteria met; redaction canary tests green; fixture suite stable (section 18) |
+| **v0.1.0 (core)** | CLI; preflight; kubeconform validation; Kind lifecycle; manifest and Helm deploy; readiness and service checks; evidence collection and redaction; JSON and HTML reports; local run directories with pruning; composite GitHub Action; `doctor` and `gc` | none |
+| **v0.1.x (analysis)** | `--analyze` using Claude, with payload preview, citation validation, cost caps | Core exit criteria met; redaction canary tests green; fixture suite stable; a few external users have run the core (section 18) |
 | **v0.2 (remote)** | REST API, PostgreSQL, job queue and workers, authentication, remote CLI mode, event streaming | v0.1 used in the wild for a while; section 12 entry gates satisfied; single-tenant, trusted-users deployment only |
 | **v0.3 (dashboard)** | React and TypeScript UI over the API | v0.2 API stable |
 | **Later** | Runner adapters (Chainsaw first), proposals and approval workflow, probe-pod connectivity tests, multi-tenancy, bring-your-own-cluster | Demand validated; separate security review |
@@ -236,7 +236,7 @@ No hosted or public service, and no multi-user server, until an execution enviro
 
 ## 8. Component responsibilities
 
-Phase column: **1** = v0.1 core, **1a** = v0.1 analysis milestone, **2** = v0.2, **3** = v0.3.
+Phase column: **1** = v0.1 core, **1a** = v0.1.x analysis release (after v0.1.0), **2** = v0.2, **3** = v0.3.
 
 | Component | Phase | Responsibility | Must not |
 |---|---|---|---|
@@ -395,9 +395,9 @@ jobs:
           upload-bundle: on-failure
 ```
 
-## 11. AI subsystem (v0.1 final milestone)
+## 11. AI subsystem (v0.1.x, after the stabilization gate)
 
-Starts only when the gate in section 3 is met. Shipped behind `--analyze`, off by default.
+Starts only when the gate in section 3 is met. Shipped behind `--analyze`, off by default. The `--analyze` flag does not exist in v0.1.0; it is added with this release, so no version ships a flag that does nothing.
 
 Flow:
 
@@ -606,7 +606,7 @@ Structured logs (slog) with the run ID on every line; `deployora doctor` reporti
 
 ## 18. v0.1 scope for one developer
 
-**In:** everything marked phase 1 and 1a in section 8.
+**In v0.1.0:** everything marked phase 1 in section 8. **In v0.1.x:** phase 1a (analysis).
 
 **Milestones (order matters; sizes are relative, not calendar estimates):**
 
@@ -617,7 +617,7 @@ Structured logs (slog) with the run ID on every line; `deployora doctor` reporti
 | M3 | Checks, collection, redaction, evidence bundle, engine phases with classification | L | Every row of the classification table is covered by a test |
 | M4 | JSON and HTML reports, retention and prune, GitHub Action | M | Action passes on a hosted runner; stranger-run quickstart works in under 10 minutes |
 | M5 | **Stabilization gate** | S to M | Core exit criteria met, canary tests green, a few external users have run it |
-| M6 | Claude analysis | M | Preview, citation validation and graceful degradation work; manual eval set passes |
+| M6 | Claude analysis (released as v0.1.x, after v0.1.0) | M | Preview, citation validation and graceful degradation work; manual eval set passes |
 
 **Core exit criteria (the gate):** healthy fixture exits 0; each broken fixture exits 1 with the right failing check; a stopped Docker daemon exits 2; an invalid config exits 3; a deadline overrun exits 4 with evidence collected and cleanup done; Ctrl-C exits 130 with cleanup; no Secret or canary appears in any bundle; the entire core suite passes with no network access to Anthropic.
 
