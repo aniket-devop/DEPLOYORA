@@ -10,7 +10,7 @@ Format: Context, Decision, Reasons, Alternatives considered, Consequences, Revis
 
 **Context:** one maintainer (initially), a CLI and a server that must share logic, and a need for contributors to understand the code quickly.
 
-**Decision:** one repository, one `go.mod`, packages under `internal/` with enforced dependency rules. Two binaries (`kubetrial`, `kubetrial-server`) built from the same module.
+**Decision:** one repository, one `go.mod`, packages under `internal/` with enforced dependency rules. Two binaries (`deployora`, `deployora-server`) built from the same module.
 
 **Reasons:** lowest operational and cognitive cost; refactoring across boundaries is cheap; the CLI works with no network service at all.
 
@@ -42,7 +42,7 @@ Format: Context, Decision, Reasons, Alternatives considered, Consequences, Revis
 
 **Context:** the requirements say isolated temporary clusters and never target production in the MVP.
 
-**Decision:** a `ClusterProvider` interface exists, but only the Kind implementation ships. The engine never reads `~/.kube/config` or `KUBECONFIG`. It writes a private kubeconfig into the run directory, passes it explicitly to every subprocess and client, scrubs the environment of child processes, and refuses to operate on clusters not named `kubetrial-<runid>`. The CLI exposes no `--context` or `--kubeconfig` flag.
+**Decision:** a `ClusterProvider` interface exists, but only the Kind implementation ships. The engine never reads `~/.kube/config` or `KUBECONFIG`. It writes a private kubeconfig into the run directory, passes it explicitly to every subprocess and client, scrubs the environment of child processes, and refuses to operate on clusters not named `deployora-<runid>`. The CLI exposes no `--context` or `--kubeconfig` flag.
 
 **Reasons:** the safest way to never hit production is to make it impossible to point the tool at anything it did not create. A warning or a confirmation prompt is not a control.
 
@@ -122,7 +122,7 @@ Format: Context, Decision, Reasons, Alternatives considered, Consequences, Revis
 
 **Context:** we depend on three external tools with different API stability.
 
-**Decision:** use Kind's Go library for provisioning. Run Helm through its CLI behind the `Deployer` interface instead of embedding the Helm SDK. Use kubeconform as a library if its package API proves stable, otherwise as a pinned binary. `kubetrial doctor` checks tool versions.
+**Decision:** use Kind's Go library for provisioning. Run Helm through its CLI behind the `Deployer` interface instead of embedding the Helm SDK. Use kubeconform as a library if its package API proves stable, otherwise as a pinned binary. `deployora doctor` checks tool versions.
 
 **Reasons:** the Helm SDK changes between releases and the CLI matches what users run. Shelling out costs little here. Kind's library is the supported way to drive it.
 
@@ -154,7 +154,7 @@ Format: Context, Decision, Reasons, Alternatives considered, Consequences, Revis
 
 **Context:** requirements forbid unrestricted AI execution and require human approval.
 
-**Decision:** AI remediation output becomes `Proposal` records (`pending`). In the MVP, approval only unlocks writing a unified diff or instructions to a file for the user to review and commit. KubeTrial never applies model output to any cluster, and no model tool-use is enabled. Approvals are audited with actor and time.
+**Decision:** AI remediation output becomes `Proposal` records (`pending`). In the MVP, approval only unlocks writing a unified diff or instructions to a file for the user to review and commit. Deployora never applies model output to any cluster, and no model tool-use is enabled. Approvals are audited with actor and time.
 
 **Reasons:** the clusters are throwaway, so the valuable output is a change to the source manifests or chart. That change belongs in version control with human review.
 
