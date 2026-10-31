@@ -16,7 +16,7 @@ This document describes planned architecture and design intent. It is not a stat
 
 Deployora answers: **"Will this deploy and run healthy on a clean, throwaway Kubernetes cluster, and if not, why?"**
 
-**v0.1.0 does exactly this, locally:** validate manifests or a Helm chart with kubeconform, create a Kind cluster, deploy, run readiness and service checks, collect redacted evidence, write JSON and HTML reports, and tear everything down.
+**v0.1.0 does exactly this, locally:** validate manifests or a Helm chart with kubeconform, create a Kind cluster, deploy, run readiness and service checks, collect redacted evidence, write JSON and HTML reports, and tear everything down. It works with no configuration file: `deployora run ./chart` is enough, and `deployora.yaml` is optional (section 15).
 
 **Not in v0.1.0:** Claude failure analysis (planned for a later v0.1.x release, once the core is stable), REST API, PostgreSQL, job workers, remote execution, React dashboard, runner adapters, remediation approval workflow, bring-your-own-cluster, any hosted or shared service.
 
@@ -83,7 +83,7 @@ There is deliberately **no separate `app` layer in v0.1**. `engine.Run` is the b
 
 A run moves through phases in order, stopping at the first terminal cause:
 
-1. **Preflight:** load and validate config, check prerequisites (Docker reachable, Helm and kubeconform present at supported versions), check disk space.
+1. **Preflight:** resolve the target and effective settings (flags, optional `deployora.yaml`, defaults) and validate them, check prerequisites (Docker reachable, Helm and kubeconform present at supported versions), check disk space.
 2. **Validate:** kubeconform on manifests, or on `helm template` output (rendered in memory, never written to disk unredacted).
 3. **Provision:** create Kind cluster `deployora-<runid>` with a pinned node image.
 4. **Deploy:** apply manifests or `helm install` into a fresh namespace.
@@ -118,7 +118,7 @@ Every outcome carries a machine-readable `reason` code and the `stage` where it 
 | Manifests violate schema (errors) | `failed` | `validation_failed` | validate | No |
 | `helm template` fails to render the chart | `failed` | `render_failed` | validate | No |
 | CRD schema missing | warning by default; with `--strict-schemas`, `failed` | `schema_missing` | validate | No |
-| Unparseable config, unknown field, missing target path, unsupported Kubernetes version | `invalid_config` | `config_invalid` | preflight | No |
+| Unparseable config, unknown field, missing, unrecognizable or ambiguous target path, library chart, chart dependencies not vendored, unsupported Kubernetes version | `invalid_config` | `config_invalid` | preflight | No |
 | Docker not running, Helm or kubeconform missing or unsupported version, disk full | `errored` | `prerequisite_missing` or `environment_error` | preflight | No |
 | Kind create fails (cannot pull node image, resource exhaustion, port conflict) | `errored` | `provision_failed` | provision | Maybe (cleaned) |
 | Explicit admission or policy denial: a validating or mutating webhook, a ValidatingAdmissionPolicy, or built-in admission control (for example Pod Security) responds by denying an object | `failed` | `admission_rejected` | deploy | Yes |
@@ -198,7 +198,7 @@ A passed run that leaks a cluster still exits 0 on purpose. The verdict about th
 
 ### 6.6 Report fields
 
-`run.json` and `report.json` include `outcome`, `reason`, `stage`, `exit_code`, per-stage statuses, failing check names, `warnings[]`, `cleanup` status, and `schema_version`. These fields and the exit codes are a public contract once v0.1 ships.
+`run.json` and `report.json` include `outcome`, `reason`, `stage`, `exit_code`, `effective_settings` (the resolved flags and file paths, never file contents), per-stage statuses, failing check names, `warnings[]`, `cleanup` status, and `schema_version`. These fields and the exit codes are a public contract once v0.1 ships.
 
 ## 7. Trust model and isolation
 
@@ -241,7 +241,7 @@ Phase column: **1** = v0.1 core, **1a** = v0.1.x analysis release (after v0.1.0)
 | Component | Phase | Responsibility | Must not |
 |---|---|---|---|
 | `domain` | 1 | Small shared types: Run, StageResult, CheckResult, Outcome and reason codes, EvidenceRef | Contain I/O |
-| `config` | 1 | Parse and validate `deployora.yaml`; produce `invalid_config` errors with line context | Read the environment beyond documented variables |
+| `config` | 1 | Detect the target; resolve effective settings from flags, optional `deployora.yaml` and defaults; produce `invalid_config` errors with line context | Read the environment beyond documented variables |
 | `engine` | 1 | `Run(ctx, Spec) -> Result`: phase sequencing, deadlines, wind-down, cancellation, outcome classification (section 6) | Know about Claude, HTTP or SQL |
 | `validate` | 1 | Run pinned `kubeconform` (binary, JSON output) on files or on in-memory rendered Helm output; normalize results; flag missing schemas | Reach the network for schemas unless configured |
 | `cluster` | 1 | `ClusterProvider` with the Kind implementation; kubeconfig isolation; naming and labels; production guard; `gc` | Read the user's default kubeconfig |
@@ -391,7 +391,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: <org>/deployora-action@v0
         with:
-          config: deployora.yaml
+          target: ./charts/app
           upload-bundle: on-failure
 ```
 
@@ -549,7 +549,38 @@ web/                     v0.3   React + TypeScript, generated API client
 
 Empty scaffolding for later phases is intentionally absent. `GOVERNANCE.md` can wait until there is more than one maintainer.
 
-## 15. Config sketch (`deployora.yaml`)
+## 15. Configuration
+
+### 15.1 Config-less runs
+
+`deployora run <path>` works with no configuration file. `deployora.yaml` is optional and only adds what flags and defaults cannot express (for example HTTP checks).
+
+**Target detection** (the path is the only required argument):
+
+| The path is | Treated as |
+|---|---|
+| A directory containing `Chart.yaml` | A Helm chart (its `templates/` directory holds templates, not manifests) |
+| A directory or file containing Kubernetes YAML, with no `Chart.yaml` | Manifests |
+| A directory with no `Chart.yaml` and no YAML files, a directory whose subdirectories hold several charts, a library chart (`type: library`), or a chart whose dependencies are not vendored in `charts/` | `invalid_config`, with a message naming the problem and the fix (for several charts: run one at a time, for example with a CI matrix; for dependencies: the exact `helm dependency build <path>` command) |
+
+**Settings and precedence.** Command-line flags override `deployora.yaml`, which overrides defaults. The file is used if `--config <file>` is given, or otherwise if `deployora.yaml` exists in the current directory. [assumption: confirm this discovery rule] A flag that does not apply to the target (for example `--values` for manifests) is `invalid_config`.
+
+Flags in v0.1.0 (deliberately few):
+
+| Flag | Meaning |
+|---|---|
+| `--config <file>` | Path to an optional `deployora.yaml`. |
+| `--values`, `-f <file>` (repeatable) | Helm values files, passed by file only. There is no `--set`, because values given on the command line are visible in process listings. |
+| `--namespace <name>` | Namespace to deploy into. Default: a fresh namespace created for the run. |
+| `--kube-version <version>` | Kubernetes version for the Kind cluster. Default: the version pinned in this Deployora release, documented in the release notes. |
+
+Other defaults: the release name is the chart name (truncated to Helm's limit), the run deadline and readiness timeout are those in section 6, and only the default checks run (readiness, restarts and crash loops, Jobs, Services with ready endpoints). HTTP checks need a service, port and path, so they require `deployora.yaml`.
+
+**Known limitation: charts that need values.** Many charts cannot render without values. In a config-less run such a chart ends as `failed/render_failed`, which can mean "a required value was not supplied" rather than "the chart is broken". The report shows Helm's message and a hint to pass `--values`. Deployora does not read `ci/*-values.yaml` files automatically in v0.1.0 [K: the chart-testing convention is unverified; revisit after checking].
+
+**Reproducibility.** The resolved settings are recorded in `run.json` as `effective_settings` (flag values and file paths, never file contents), so a flag-only run can be reproduced.
+
+### 15.2 Config file sketch (optional)
 
 ```yaml
 version: 1
