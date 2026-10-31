@@ -2,7 +2,7 @@
 
 Status: Revision 4, draft for founder review (incorporates two rounds of principal-engineer review feedback, plus the Revision 4 rebrand and error-classification corrections)
 
-Companion docs: `decisions.md` (why), `competitor-analysis.md` (market), `../roadmap.md` (when)
+Companion docs: `../decisions.md` (why), `../competitor-analysis.md` (market), `../roadmap.md` (when)
 
 This document describes planned architecture and design intent. It is not a statement of what is implemented. Where a claim depends on external behavior that has not been verified, it is marked `[K]` (verify) or `[assumption]`.
 
@@ -523,7 +523,9 @@ deployora/
 │   └── e2e/                    # real Kind tests (build tag e2e)
 ├── examples/
 ├── docs/
-│   ├── architecture/           # overview, decisions, competitor-analysis
+│   ├── architecture/           # overview.md
+│   ├── decisions.md
+│   ├── competitor-analysis.md
 │   ├── roadmap.md
 │   └── user/                   # quickstart, config reference, trust model, what is sent to Claude
 ├── hack/
