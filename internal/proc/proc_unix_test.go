@@ -5,6 +5,7 @@ package proc
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -47,6 +48,10 @@ func runHelper(mode string) {
 		signal.Ignore(syscall.SIGINT)
 		markReady()
 		time.Sleep(time.Minute)
+		os.Exit(0)
+	case "stdin":
+		data, _ := io.ReadAll(os.Stdin)
+		fmt.Fprintf(os.Stdout, "got:%s", data)
 		os.Exit(0)
 	case "flood":
 		fmt.Fprint(os.Stdout, strings.Repeat("x", 1000))

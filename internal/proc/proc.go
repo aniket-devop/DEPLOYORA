@@ -11,6 +11,7 @@ package proc
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -33,6 +34,8 @@ type Spec struct {
 	Name string
 	Args []string
 	Dir  string
+	// Stdin is the standard input of the command. Nil means the null device (immediate end of input).
+	Stdin io.Reader
 	// Env entries (KEY=VALUE) are added after the inherited environment has been
 	// scrubbed of KUBECONFIG, so a caller can set variables deliberately.
 	Env []string
@@ -83,6 +86,7 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	cmd.Env = append(scrubbedEnv(os.Environ()), spec.Env...)
 	stdout := &capped{max: limit}
 	stderr := &capped{max: limit}
+	cmd.Stdin = spec.Stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.WaitDelay = waitDelay
